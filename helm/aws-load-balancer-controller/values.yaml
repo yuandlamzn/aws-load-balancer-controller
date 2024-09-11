@@ -7,9 +7,9 @@ replicaCount: 2
 revisionHistoryLimit: 10
 
 image:
-  repository: public.ecr.aws/eks/aws-load-balancer-controller
+  repository: 684421966577.dkr.ecr.us-west-2.amazonaws.com/aws-load-balancer-controller
   tag: v2.7.0
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 runtimeClassName: ""
 imagePullSecrets: []

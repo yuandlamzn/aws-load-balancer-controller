@@ -104,9 +104,7 @@ docker-push-w-buildx:
 	docker buildx build . --target bin \
         		--tag $(IMG) \
 				--build-arg BASE_IMAGE=$(BASE_IMAGE) \
-				--build-arg BUILD_IMAGE=$(BUILD_IMAGE) \
-				--push \
-        		--platform ${IMG_PLATFORM}
+				--build-arg BUILD_IMAGE=$(BUILD_IMAGE)
 
 # find or download controller-gen
 # download controller-gen if necessary

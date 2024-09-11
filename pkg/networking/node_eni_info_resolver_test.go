@@ -336,7 +336,7 @@ func Test_defaultNodeENIInfoResolver_Resolve(t *testing.T) {
 			for _, call := range tt.fields.fetchNodeInstancesCalls {
 				nodeInfoProvider.EXPECT().FetchNodeInstances(gomock.Any(), call.nodes).Return(call.nodeInstanceByNodeKey, call.err)
 			}
-			r := NewDefaultNodeENIInfoResolver(nodeInfoProvider, logr.New(&log.NullLogSink{}))
+			r := NewDefaultNodeENIInfoResolver(nodeInfoProvider, nil, "", logr.New(&log.NullLogSink{}))
 			for _, call := range tt.wantResolveCalls {
 				got, err := r.Resolve(context.Background(), call.args.nodes)
 				if call.wantErr != nil {

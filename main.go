@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"fmt"
 	"os"
 
 	elbv2deploy "sigs.k8s.io/aws-load-balancer-controller/pkg/deploy/elbv2"
@@ -171,6 +172,7 @@ func main() {
 	//+kubebuilder:scaffold:builder
 
 	go func() {
+		setupLog.Info(fmt.Sprintf("Updated controller to support HyperPod. VpcId: [%v].", cloud.VpcID()))
 		setupLog.Info("starting podInfo repo")
 		if err := podInfoRepo.Start(ctx); err != nil {
 			setupLog.Error(err, "problem running podInfo repo")

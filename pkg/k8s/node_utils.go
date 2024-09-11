@@ -8,6 +8,7 @@ import (
 )
 
 var awsInstanceIDRegex = regexp.MustCompile("^i-[^/]*$")
+var awsHyperPodIdRegex = regexp.MustCompile("^hyperpod-.+?-(i-[^/]*)$")
 
 // GetNodeCondition will get pointer to Node's existing condition.
 // returns nil if no matching condition found.
@@ -28,6 +29,14 @@ func ExtractNodeInstanceID(node *corev1.Node) (string, error) {
 
 	providerIDParts := strings.Split(providerID, "/")
 	instanceID := providerIDParts[len(providerIDParts)-1]
+
+	matches := awsHyperPodIdRegex.FindStringSubmatch(instanceID)
+	if len(matches) == 2 {
+		// The full match is at index 0, the captured group is at index 1
+		//return matches[1], nil
+		return instanceID, nil
+	}
+
 	if !awsInstanceIDRegex.MatchString(instanceID) {
 		return "", errors.Errorf("providerID %s is invalid for EC2 instances, node: %s", providerID, node.Name)
 	}

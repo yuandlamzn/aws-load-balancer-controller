@@ -2,6 +2,7 @@ package networking
 
 import (
 	"context"
+	"fmt"
 	awssdk "github.com/aws/aws-sdk-go/aws"
 	ec2sdk "github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/go-logr/logr"
@@ -9,7 +10,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/cache"
+	"sigs.k8s.io/aws-load-balancer-controller/pkg/algorithm"
+	"sigs.k8s.io/aws-load-balancer-controller/pkg/aws/services"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/k8s"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,9 +28,11 @@ type NodeENIInfoResolver interface {
 }
 
 // NewDefaultNodeENIInfoResolver constructs new defaultNodeENIInfoResolver.
-func NewDefaultNodeENIInfoResolver(nodeInfoProvider NodeInfoProvider, logger logr.Logger) *defaultNodeENIInfoResolver {
+func NewDefaultNodeENIInfoResolver(nodeInfoProvider NodeInfoProvider, ec2Client services.EC2, vpcID string, logger logr.Logger) *defaultNodeENIInfoResolver {
 	return &defaultNodeENIInfoResolver{
 		nodeInfoProvider:      nodeInfoProvider,
+		ec2Client:             ec2Client,
+		vpcID:                 vpcID,
 		logger:                logger,
 		nodeENIInfoCache:      cache.NewExpiring(),
 		nodeENIInfoCacheMutex: sync.RWMutex{},
@@ -40,6 +46,9 @@ var _ NodeENIInfoResolver = &defaultNodeENIInfoResolver{}
 type defaultNodeENIInfoResolver struct {
 	// nodeInfoProvider
 	nodeInfoProvider NodeInfoProvider
+	ec2Client        services.EC2
+	vpcID            string
+
 	// logger
 	logger logr.Logger
 
@@ -52,6 +61,27 @@ func (r *defaultNodeENIInfoResolver) Resolve(ctx context.Context, nodes []*corev
 	eniInfoByNodeKey := r.fetchENIInfosFromCache(nodes)
 	nodesWithoutENIInfo := computeNodesWithoutENIInfo(nodes, eniInfoByNodeKey)
 	if len(nodesWithoutENIInfo) > 0 {
+		if strings.Contains(nodesWithoutENIInfo[0].Name, "hyperpod") {
+			res := make(map[types.NamespacedName]ENIInfo)
+			for _, node := range nodesWithoutENIInfo {
+				namespacedName := types.NamespacedName{
+					Namespace: node.Namespace,
+					Name:      node.Name,
+				}
+				addresses := node.Status.Addresses
+				eniByID, err := r.getENIMappingViaDescribe(ctx, []string{addresses[0].Address}, "addresses.private-ip-address")
+				if err != nil {
+					return nil, err
+				}
+				for _, eni := range eniByID {
+					eniInfo := buildENIInfoViaENI(eni)
+					res[namespacedName] = eniInfo
+				}
+			}
+			r.logger.Info(fmt.Sprintf("[HP] Hack nodeENI Info: [%s]", res))
+			return res, nil
+		}
+
 		eniInfoByNodeKeyViaLookup, err := r.resolveViaInstanceID(ctx, nodesWithoutENIInfo)
 		if err != nil {
 			return nil, err
@@ -71,6 +101,36 @@ func (r *defaultNodeENIInfoResolver) Resolve(ctx context.Context, nodes []*corev
 		return nil, errors.Errorf("cannot resolve node ENI for nodes: %v", unresolvedNodeKeys)
 	}
 	return eniInfoByNodeKey, nil
+}
+
+func (r *defaultNodeENIInfoResolver) getENIMappingViaDescribe(ctx context.Context, nodeIPs []string, ipAddressFilterKey string) (map[string]*ec2sdk.NetworkInterface, error) {
+	nodeIPChunks := algorithm.ChunkStrings(nodeIPs, 199)
+	eniByID := make(map[string]*ec2sdk.NetworkInterface)
+	for _, podIPChunk := range nodeIPChunks {
+		req := &ec2sdk.DescribeNetworkInterfacesInput{
+			Filters: []*ec2sdk.Filter{
+				{
+					Name:   awssdk.String("vpc-id"),
+					Values: awssdk.StringSlice([]string{r.vpcID}),
+				},
+				{
+					Name:   awssdk.String(ipAddressFilterKey),
+					Values: awssdk.StringSlice(podIPChunk),
+				},
+			},
+		}
+		r.logger.Info(fmt.Sprintf("[HP] NodeEniInfoResolver describeNetworkInterfaces: [%v]", req))
+		enis, err := r.ec2Client.DescribeNetworkInterfacesAsList(ctx, req)
+		r.logger.Info(fmt.Sprintf("[HP] NodeEniInfoResolver enis: [%v], err: [%v]", enis, err))
+		if err != nil {
+			return nil, err
+		}
+		for _, eni := range enis {
+			eniID := awssdk.StringValue(eni.NetworkInterfaceId)
+			eniByID[eniID] = eni
+		}
+	}
+	return eniByID, nil
 }
 
 type nodeENIInfoCacheKey struct {
